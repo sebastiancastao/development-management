@@ -116,12 +116,18 @@ export default function Home() {
   }
 
   const filtered = useMemo(() => {
-    return tasks.filter((t) => {
-      if (filterStatus !== 'all' && t.status !== filterStatus) return false;
-      if (filterPriority !== 'all' && t.priority !== filterPriority) return false;
-      if (search && !t.name.toLowerCase().includes(search.toLowerCase()) && !t.description.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    });
+    return tasks
+      .filter((t) => {
+        if (filterStatus !== 'all' && t.status !== filterStatus) return false;
+        if (filterPriority !== 'all' && t.priority !== filterPriority) return false;
+        if (search && !t.name.toLowerCase().includes(search.toLowerCase()) && !t.description.toLowerCase().includes(search.toLowerCase())) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aDone = a.status === 'done' ? 1 : 0;
+        const bDone = b.status === 'done' ? 1 : 0;
+        return aDone - bDone;
+      });
   }, [tasks, filterStatus, filterPriority, search]);
 
   const stats = useMemo(() => ({
