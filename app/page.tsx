@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import TaskForm from './components/TaskForm';
-import { Task, Priority, Status } from './types';
+import { Task, Priority, Status, Category } from './types';
 import { supabase } from '../lib/supabase';
 
 const PRIORITY_STYLES: Record<Priority, string> = {
@@ -21,6 +21,18 @@ const STATUS_LABELS: Record<Status, string> = {
   'todo': 'To Do',
   'in-progress': 'In Progress',
   'done': 'Done',
+};
+
+const CATEGORY_STYLES: Record<Category, string> = {
+  'bug': 'bg-rose-100 text-rose-700',
+  'new-feature': 'bg-violet-100 text-violet-700',
+  'improvement': 'bg-cyan-100 text-cyan-700',
+};
+
+const CATEGORY_LABELS: Record<Category, string> = {
+  'bug': 'Bug',
+  'new-feature': 'New Feature',
+  'improvement': 'Improvement',
 };
 
 function isOverdue(dueDate?: string, status?: Status) {
@@ -60,6 +72,7 @@ export default function Home() {
       status: row.status as Status,
       dueDate: (row.due_date as string) ?? undefined,
       timeSpent: row.time_spent != null ? (row.time_spent as number) : undefined,
+      category: (row.category as Category) ?? undefined,
       createdAt: row.created_at as string,
     };
   }
@@ -74,6 +87,7 @@ export default function Home() {
         status: data.status,
         due_date: data.dueDate ?? null,
         time_spent: data.timeSpent ?? null,
+        category: data.category ?? null,
       })
       .select()
       .single();
@@ -93,6 +107,7 @@ export default function Home() {
         status: data.status,
         due_date: data.dueDate ?? null,
         time_spent: data.timeSpent ?? null,
+        category: data.category ?? null,
       })
       .eq('id', editingTask.id)
       .select()
@@ -268,6 +283,11 @@ export default function Home() {
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PRIORITY_STYLES[task.priority]}`}>
                           {task.priority}
                         </span>
+                        {task.category && (
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${CATEGORY_STYLES[task.category]}`}>
+                            {CATEGORY_LABELS[task.category]}
+                          </span>
+                        )}
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[task.status]}`}>
                           {STATUS_LABELS[task.status]}
                         </span>

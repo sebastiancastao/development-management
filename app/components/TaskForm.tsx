@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Task, Priority, Status } from '../types';
+import { Task, Priority, Status, Category } from '../types';
 
 interface TaskFormProps {
   onSubmit: (task: Omit<Task, 'id' | 'createdAt'>) => void;
@@ -16,6 +16,7 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
   const [status, setStatus] = useState<Status>('todo');
   const [dueDate, setDueDate] = useState('');
   const [timeSpent, setTimeSpent] = useState('');
+  const [category, setCategory] = useState<Category | ''>('');
 
   useEffect(() => {
     if (initialTask) {
@@ -25,6 +26,7 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
       setStatus(initialTask.status);
       setDueDate(initialTask.dueDate ?? '');
       setTimeSpent(initialTask.timeSpent != null ? String(initialTask.timeSpent) : '');
+      setCategory(initialTask.category ?? '');
     }
   }, [initialTask]);
 
@@ -38,6 +40,7 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
       status,
       dueDate: dueDate || undefined,
       timeSpent: timeSpent !== '' ? Number(timeSpent) : undefined,
+      category: category !== '' ? category : undefined,
     });
     onClose();
   }
@@ -113,6 +116,20 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
                 <option value="done">Done</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Category</label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value as Category | '')}
+              className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-white"
+            >
+              <option value="">No category</option>
+              <option value="bug">Bug</option>
+              <option value="new-feature">New Feature</option>
+              <option value="improvement">Improvement</option>
+            </select>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

@@ -1,5 +1,6 @@
 export type Priority = 'low' | 'medium' | 'high';
 export type Status = 'todo' | 'in-progress' | 'done';
+export type Category = 'bug' | 'new-feature' | 'improvement';
 
 export interface Task {
   id: string;
@@ -9,5 +10,6 @@ export interface Task {
   status: Status;
   dueDate?: string;
   timeSpent?: number;
+  category?: Category;
   createdAt: string;
 }
