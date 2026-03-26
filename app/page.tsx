@@ -59,6 +59,7 @@ export default function Home() {
       priority: row.priority as Priority,
       status: row.status as Status,
       dueDate: (row.due_date as string) ?? undefined,
+      timeSpent: row.time_spent != null ? (row.time_spent as number) : undefined,
       createdAt: row.created_at as string,
     };
   }
@@ -72,6 +73,7 @@ export default function Home() {
         priority: data.priority,
         status: data.status,
         due_date: data.dueDate ?? null,
+        time_spent: data.timeSpent ?? null,
       })
       .select()
       .single();
@@ -90,6 +92,7 @@ export default function Home() {
         priority: data.priority,
         status: data.status,
         due_date: data.dueDate ?? null,
+        time_spent: data.timeSpent ?? null,
       })
       .eq('id', editingTask.id)
       .select()
@@ -272,12 +275,21 @@ export default function Home() {
                       {task.description && (
                         <p className="text-sm text-gray-500 line-clamp-2">{task.description}</p>
                       )}
-                      {task.dueDate && (
-                        <p className={`text-xs mt-1 ${overdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
-                          {overdue ? 'Overdue: ' : 'Due: '}
-                          {new Date(task.dueDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </p>
-                      )}
+                      <div className="flex items-center gap-3 mt-1 flex-wrap">
+                        {task.dueDate && (
+                          <p className={`text-xs ${overdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                            {overdue ? 'Overdue: ' : 'Due: '}
+                            {new Date(task.dueDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </p>
+                        )}
+                        {task.timeSpent != null && (
+                          <p className="text-xs text-gray-400">
+                            &#x23F1; {task.timeSpent >= 60
+                              ? `${Math.floor(task.timeSpent / 60)}h ${task.timeSpent % 60 > 0 ? `${task.timeSpent % 60}m` : ''}`.trim()
+                              : `${task.timeSpent}m`}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     {/* Actions */}

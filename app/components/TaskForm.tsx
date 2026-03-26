@@ -15,6 +15,7 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
   const [priority, setPriority] = useState<Priority>('medium');
   const [status, setStatus] = useState<Status>('todo');
   const [dueDate, setDueDate] = useState('');
+  const [timeSpent, setTimeSpent] = useState('');
 
   useEffect(() => {
     if (initialTask) {
@@ -23,6 +24,7 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
       setPriority(initialTask.priority);
       setStatus(initialTask.status);
       setDueDate(initialTask.dueDate ?? '');
+      setTimeSpent(initialTask.timeSpent != null ? String(initialTask.timeSpent) : '');
     }
   }, [initialTask]);
 
@@ -35,6 +37,7 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
       priority,
       status,
       dueDate: dueDate || undefined,
+      timeSpent: timeSpent !== '' ? Number(timeSpent) : undefined,
     });
     onClose();
   }
@@ -112,14 +115,30 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Due Date</label>
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Due Date</label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Time Spent <span className="text-gray-400 font-normal">(minutes)</span>
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={timeSpent}
+                onChange={(e) => setTimeSpent(e.target.value)}
+                placeholder="e.g. 90"
+                className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+              />
+            </div>
           </div>
 
           <div className="flex gap-3 pt-1">
