@@ -148,12 +148,21 @@ export default function Home() {
       });
   }, [tasks, filterStatus, filterPriority, search]);
 
-  const stats = useMemo(() => ({
-    total: tasks.length,
-    todo: tasks.filter((t) => t.status === 'todo').length,
-    inProgress: tasks.filter((t) => t.status === 'in-progress').length,
-    done: tasks.filter((t) => t.status === 'done').length,
-  }), [tasks]);
+  const stats = useMemo(() => {
+    const totalMinutes = tasks.reduce((sum, t) => sum + (t.timeSpent ?? 0), 0);
+    const timeLabel = totalMinutes === 0
+      ? '0m'
+      : totalMinutes >= 60
+      ? `${Math.floor(totalMinutes / 60)}h${totalMinutes % 60 > 0 ? ` ${totalMinutes % 60}m` : ''}`
+      : `${totalMinutes}m`;
+    return {
+      total: tasks.length,
+      todo: tasks.filter((t) => t.status === 'todo').length,
+      inProgress: tasks.filter((t) => t.status === 'in-progress').length,
+      done: tasks.filter((t) => t.status === 'done').length,
+      timeLabel,
+    };
+  }, [tasks]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -178,12 +187,13 @@ export default function Home() {
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
         {/* Stats */}
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-5 gap-3">
           {[
             { label: 'Total', value: stats.total, color: 'text-gray-900' },
             { label: 'To Do', value: stats.todo, color: 'text-gray-600' },
             { label: 'In Progress', value: stats.inProgress, color: 'text-blue-600' },
             { label: 'Done', value: stats.done, color: 'text-emerald-600' },
+            { label: 'Time Logged', value: stats.timeLabel, color: 'text-violet-600' },
           ].map((s) => (
             <div key={s.label} className="bg-white rounded-xl border border-gray-200 px-4 py-3 text-center">
               <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
