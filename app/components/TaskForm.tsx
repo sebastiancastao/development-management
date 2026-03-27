@@ -129,6 +129,7 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
               <option value="bug">Bug</option>
               <option value="new-feature">New Feature</option>
               <option value="improvement">Improvement</option>
+              <option value="va">VA</option>
             </select>
           </div>
 

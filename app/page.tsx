@@ -27,12 +27,14 @@ const CATEGORY_STYLES: Record<Category, string> = {
   'bug': 'bg-rose-100 text-rose-700',
   'new-feature': 'bg-violet-100 text-violet-700',
   'improvement': 'bg-cyan-100 text-cyan-700',
+  'va': 'bg-orange-100 text-orange-700',
 };
 
 const CATEGORY_LABELS: Record<Category, string> = {
   'bug': 'Bug',
   'new-feature': 'New Feature',
   'improvement': 'Improvement',
+  'va': 'VA',
 };
 
 function isOverdue(dueDate?: string, status?: Status) {
