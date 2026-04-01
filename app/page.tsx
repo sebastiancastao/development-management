@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import TaskForm from './components/TaskForm';
-import { Task, Priority, Status, Category } from './types';
+import { Task, Priority, Status, Category, Attachment } from './types';
 import { supabase } from '../lib/supabase';
 
 const PRIORITY_STYLES: Record<Priority, string> = {
@@ -50,12 +50,13 @@ export default function Home() {
   const [filterPriority, setFilterPriority] = useState<Priority | 'all'>('all');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [expandedAttachments, setExpandedAttachments] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     async function fetchTasks() {
       const { data, error } = await supabase
         .from('tasks')
-        .select('*')
+        .select('*, task_attachments(*)')
         .order('created_at', { ascending: false });
       if (!error && data) {
         setTasks(data.map(rowToTask));
@@ -65,7 +66,19 @@ export default function Home() {
     fetchTasks();
   }, []);
 
+  function rowToAttachment(row: Record<string, unknown>): Attachment {
+    return {
+      id: row.id as string,
+      taskId: row.task_id as string,
+      fileName: row.file_name as string,
+      fileUrl: row.file_url as string,
+      fileSize: row.file_size as number,
+      createdAt: row.created_at as string,
+    };
+  }
+
   function rowToTask(row: Record<string, unknown>): Task {
+    const attachmentRows = (row.task_attachments as Record<string, unknown>[] | null) ?? [];
     return {
       id: row.id as string,
       name: row.name as string,
@@ -76,10 +89,40 @@ export default function Home() {
       timeSpent: row.time_spent != null ? (row.time_spent as number) : undefined,
       category: (row.category as Category) ?? undefined,
       createdAt: row.created_at as string,
+      attachments: attachmentRows.map(rowToAttachment),
     };
   }
 
-  async function addTask(data: Omit<Task, 'id' | 'createdAt'>) {
+  async function uploadFiles(taskId: string, files: File[]): Promise<Attachment[]> {
+    const uploaded: Attachment[] = [];
+    for (const file of files) {
+      const path = `${taskId}/${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('task-attachments')
+        .upload(path, file);
+      if (uploadError) continue;
+      const { data: urlData } = supabase.storage
+        .from('task-attachments')
+        .getPublicUrl(path);
+      const { data: attRow } = await supabase
+        .from('task_attachments')
+        .insert({ task_id: taskId, file_name: file.name, file_url: urlData.publicUrl, file_size: file.size })
+        .select()
+        .single();
+      if (attRow) uploaded.push(rowToAttachment(attRow as Record<string, unknown>));
+    }
+    return uploaded;
+  }
+
+  async function deleteAttachments(ids: string[]) {
+    if (ids.length === 0) return;
+    await supabase.from('task_attachments').delete().in('id', ids);
+  }
+
+  async function addTask(
+    data: Omit<Task, 'id' | 'createdAt' | 'attachments'>,
+    newFiles: File[]
+  ) {
     const { data: row, error } = await supabase
       .from('tasks')
       .insert({
@@ -94,11 +137,17 @@ export default function Home() {
       .select()
       .single();
     if (!error && row) {
-      setTasks((prev) => [rowToTask(row), ...prev]);
+      const task = rowToTask({ ...(row as Record<string, unknown>), task_attachments: [] });
+      const attachments = await uploadFiles(task.id, newFiles);
+      setTasks((prev) => [{ ...task, attachments }, ...prev]);
     }
   }
 
-  async function updateTask(data: Omit<Task, 'id' | 'createdAt'>) {
+  async function updateTask(
+    data: Omit<Task, 'id' | 'createdAt' | 'attachments'>,
+    newFiles: File[],
+    removedAttachmentIds: string[]
+  ) {
     if (!editingTask) return;
     const { data: row, error } = await supabase
       .from('tasks')
@@ -115,12 +164,36 @@ export default function Home() {
       .select()
       .single();
     if (!error && row) {
-      setTasks((prev) => prev.map((t) => (t.id === editingTask.id ? rowToTask(row) : t)));
+      await deleteAttachments(removedAttachmentIds);
+      const newAttachments = await uploadFiles(editingTask.id, newFiles);
+      const keptAttachments = (editingTask.attachments ?? []).filter(
+        (a) => !removedAttachmentIds.includes(a.id)
+      );
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === editingTask.id
+            ? { ...rowToTask({ ...(row as Record<string, unknown>), task_attachments: [] }), attachments: [...keptAttachments, ...newAttachments] }
+            : t
+        )
+      );
     }
     setEditingTask(null);
   }
 
+  function toggleAttachments(taskId: string) {
+    setExpandedAttachments((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  }
+
   async function deleteTask(id: string) {
+    const task = tasks.find((t) => t.id === id);
+    if (task?.attachments?.length) {
+      await supabase.from('task_attachments').delete().eq('task_id', id);
+    }
     await supabase.from('tasks').delete().eq('id', id);
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }
@@ -322,6 +395,25 @@ export default function Home() {
                           </p>
                         )}
                       </div>
+
+                      {/* Attachments toggle */}
+                      {(task.attachments?.length ?? 0) > 0 && (
+                        <button
+                          onClick={() => toggleAttachments(task.id)}
+                          className="flex items-center gap-1 mt-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                          </svg>
+                          {task.attachments!.length} attachment{task.attachments!.length !== 1 ? 's' : ''}
+                          <svg
+                            className={`h-3 w-3 transition-transform ${expandedAttachments.has(task.id) ? 'rotate-180' : ''}`}
+                            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
 
                     {/* Actions */}
@@ -344,6 +436,31 @@ export default function Home() {
                       </button>
                     </div>
                   </div>
+
+                  {/* Expanded attachment list */}
+                  {expandedAttachments.has(task.id) && (task.attachments?.length ?? 0) > 0 && (
+                    <div className="px-4 pb-3 space-y-1 border-t border-gray-50 pt-2">
+                      {task.attachments!.map((att) => (
+                        <a
+                          key={att.id}
+                          href={att.fileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-xs text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                        >
+                          <svg className="h-3.5 w-3.5 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                          </svg>
+                          <span className="truncate flex-1">{att.fileName}</span>
+                          <span className="text-gray-400 flex-shrink-0">
+                            {att.fileSize < 1024 * 1024
+                              ? `${(att.fileSize / 1024).toFixed(1)} KB`
+                              : `${(att.fileSize / (1024 * 1024)).toFixed(1)} MB`}
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -354,7 +471,9 @@ export default function Home() {
       {/* Form Modal */}
       {showForm && (
         <TaskForm
-          onSubmit={editingTask ? updateTask : addTask}
+          onSubmit={(data, newFiles, removedIds) =>
+            editingTask ? updateTask(data, newFiles, removedIds) : addTask(data, newFiles)
+          }
           onClose={() => { setShowForm(false); setEditingTask(null); }}
           initialTask={editingTask}
         />
