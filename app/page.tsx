@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import TaskForm from './components/TaskForm';
-import { Task, Priority, Status, Category, Attachment } from './types';
+import InvoiceForm from './components/InvoiceForm';
+import { Task, Priority, Status, Category, Attachment, Invoice, InvoiceStatus } from './types';
 import { supabase } from '../lib/supabase';
+import { downloadInvoicePDF } from '../lib/invoicePDF';
 
 const PRIORITY_STYLES: Record<Priority, string> = {
   high: 'bg-red-100 text-red-700',
@@ -37,12 +39,29 @@ const CATEGORY_LABELS: Record<Category, string> = {
   'va': 'VA',
 };
 
+const INVOICE_STATUS_STYLES: Record<InvoiceStatus, string> = {
+  draft: 'bg-gray-100 text-gray-600',
+  sent: 'bg-blue-100 text-blue-700',
+  paid: 'bg-emerald-100 text-emerald-700',
+};
+
+function formatCurrency(value: number) {
+  return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+
+function invoiceTotal(invoice: Invoice) {
+  return invoice.items.reduce((sum, item) => sum + item.amount, 0);
+}
+
 function isOverdue(dueDate?: string, status?: Status) {
   if (!dueDate || status === 'done') return false;
   return new Date(dueDate) < new Date(new Date().toDateString());
 }
 
 export default function Home() {
+  const [view, setView] = useState<'tasks' | 'invoices'>('tasks');
+
+  // --- Tasks state ---
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -51,6 +70,28 @@ export default function Home() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [expandedAttachments, setExpandedAttachments] = useState<Set<string>>(new Set());
+
+  // --- Invoices state ---
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(true);
+  const [showInvoiceForm, setShowInvoiceForm] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  const [defaultRate, setDefaultRate] = useState('');
+  const [editingRate, setEditingRate] = useState(false);
+  const [rateInput, setRateInput] = useState('');
+
+  useEffect(() => {
+    const saved = localStorage.getItem('dev-manager-hourly-rate');
+    if (saved) { setDefaultRate(saved); setRateInput(saved); }
+  }, []);
+
+  function saveRate() {
+    const val = rateInput.trim();
+    setDefaultRate(val);
+    if (val) localStorage.setItem('dev-manager-hourly-rate', val);
+    else localStorage.removeItem('dev-manager-hourly-rate');
+    setEditingRate(false);
+  }
 
   useEffect(() => {
     async function fetchTasks() {
@@ -65,6 +106,104 @@ export default function Home() {
     }
     fetchTasks();
   }, []);
+
+  useEffect(() => {
+    async function fetchInvoices() {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setInvoices(data.map(rowToInvoice));
+      }
+      setInvoicesLoading(false);
+    }
+    fetchInvoices();
+  }, []);
+
+  function rowToInvoice(row: Record<string, unknown>): Invoice {
+    return {
+      id: row.id as string,
+      invoiceNumber: row.invoice_number as string,
+      clientName: row.client_name as string,
+      clientEmail: (row.client_email as string) ?? undefined,
+      items: (row.items as Invoice['items']) ?? [],
+      notes: (row.notes as string) ?? undefined,
+      dueDate: (row.due_date as string) ?? undefined,
+      billedFrom: (row.billed_from as string) ?? undefined,
+      billedTo: (row.billed_to as string) ?? undefined,
+      status: row.status as InvoiceStatus,
+      createdAt: row.created_at as string,
+    };
+  }
+
+  async function addInvoice(data: Omit<Invoice, 'id' | 'createdAt'>) {
+    // Generate PDF immediately from form data — independent of DB result
+    const invoiceForPDF: Invoice = { ...data, id: '', createdAt: new Date().toISOString() };
+    await downloadInvoicePDF(invoiceForPDF);
+
+    const { data: row, error } = await supabase
+      .from('invoices')
+      .insert({
+        invoice_number: data.invoiceNumber,
+        client_name: data.clientName,
+        client_email: data.clientEmail ?? null,
+        items: data.items,
+        notes: data.notes ?? null,
+        due_date: data.dueDate ?? null,
+        billed_from: data.billedFrom ?? null,
+        billed_to: data.billedTo ?? null,
+        status: data.status,
+      })
+      .select()
+      .single();
+    if (!error && row) {
+      setInvoices((prev) => [rowToInvoice(row as Record<string, unknown>), ...prev]);
+    }
+  }
+
+  async function updateInvoice(data: Omit<Invoice, 'id' | 'createdAt'>) {
+    if (!editingInvoice) return;
+    const { data: row, error } = await supabase
+      .from('invoices')
+      .update({
+        invoice_number: data.invoiceNumber,
+        client_name: data.clientName,
+        client_email: data.clientEmail ?? null,
+        items: data.items,
+        notes: data.notes ?? null,
+        due_date: data.dueDate ?? null,
+        billed_from: data.billedFrom ?? null,
+        billed_to: data.billedTo ?? null,
+        status: data.status,
+      })
+      .eq('id', editingInvoice.id)
+      .select()
+      .single();
+    if (!error && row) {
+      setInvoices((prev) =>
+        prev.map((inv) => (inv.id === editingInvoice.id ? rowToInvoice(row as Record<string, unknown>) : inv))
+      );
+    }
+    setEditingInvoice(null);
+  }
+
+  async function deleteInvoice(id: string) {
+    await supabase.from('invoices').delete().eq('id', id);
+    setInvoices((prev) => prev.filter((inv) => inv.id !== id));
+  }
+
+  const nextInvoiceNumber = useMemo(() => {
+    if (invoices.length === 0) return 'INV-001';
+    const nums = invoices
+      .map((inv) => {
+        const match = inv.invoiceNumber.match(/(\d+)$/);
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter((n) => !isNaN(n));
+    const max = nums.length > 0 ? Math.max(...nums) : 0;
+    return `INV-${String(max + 1).padStart(3, '0')}`;
+  }, [invoices]);
 
   function rowToAttachment(row: Record<string, unknown>): Attachment {
     return {
@@ -244,23 +383,193 @@ export default function Home() {
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Task Manager</h1>
-            <p className="text-xs text-gray-500 mt-0.5">{stats.total} tasks total</p>
+          <div className="flex items-center gap-6">
+            <h1 className="text-xl font-bold text-gray-900">Dev Manager</h1>
+            <nav className="flex gap-1">
+              <button
+                onClick={() => setView('tasks')}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  view === 'tasks' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Tasks
+              </button>
+              <button
+                onClick={() => setView('invoices')}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  view === 'invoices' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Invoices
+              </button>
+            </nav>
           </div>
-          <button
-            onClick={() => { setEditingTask(null); setShowForm(true); }}
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add Task
-          </button>
+          {view === 'tasks' ? (
+            <button
+              onClick={() => { setEditingTask(null); setShowForm(true); }}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Task
+            </button>
+          ) : (
+            <button
+              onClick={() => { setEditingInvoice(null); setShowInvoiceForm(true); }}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New Invoice
+            </button>
+          )}
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      {view === 'invoices' && (
+        <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+          {/* Default hourly rate */}
+          <div className="flex items-center gap-3 bg-white rounded-xl border border-gray-200 px-4 py-3">
+            <svg className="h-4 w-4 text-violet-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-sm text-gray-500">Default hourly rate</span>
+            {editingRate ? (
+              <div className="flex items-center gap-2 ml-1">
+                <span className="text-sm text-gray-400">$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={rateInput}
+                  onChange={(e) => setRateInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveRate(); if (e.key === 'Escape') setEditingRate(false); }}
+                  autoFocus
+                  placeholder="0.00"
+                  className="w-24 rounded-lg border border-blue-300 px-2.5 py-1 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-blue-100"
+                />
+                <button onClick={saveRate} className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 transition-colors">Save</button>
+                <button onClick={() => setEditingRate(false)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 ml-1">
+                <span className={`text-sm font-semibold ${defaultRate ? 'text-gray-900' : 'text-gray-400'}`}>
+                  {defaultRate ? `$${defaultRate}/h` : 'Not set'}
+                </span>
+                <button
+                  onClick={() => { setRateInput(defaultRate); setEditingRate(true); }}
+                  className="rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors"
+                >
+                  {defaultRate ? 'Edit' : 'Set rate'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {invoicesLoading ? (
+            <div className="flex justify-center py-20">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+            </div>
+          ) : invoices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="rounded-full bg-gray-100 p-5 mb-4">
+                <svg className="h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <p className="text-gray-600 font-medium">No invoices yet</p>
+              <p className="text-sm text-gray-400 mt-1">Click &ldquo;New Invoice&rdquo; to get started</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {invoices.map((invoice) => {
+                const total = invoiceTotal(invoice);
+                const overdue = invoice.dueDate && invoice.status !== 'paid' && new Date(invoice.dueDate) < new Date(new Date().toDateString());
+                return (
+                  <div
+                    key={invoice.id}
+                    className={`group bg-white rounded-xl border transition-all ${
+                      invoice.status === 'paid'
+                        ? 'border-gray-100 opacity-75'
+                        : overdue
+                        ? 'border-red-200'
+                        : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-center gap-4 p-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                          <span className="text-sm font-semibold text-gray-900">{invoice.invoiceNumber}</span>
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${INVOICE_STATUS_STYLES[invoice.status]}`}>
+                            {invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600">{invoice.clientName}</p>
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                          {invoice.clientEmail && (
+                            <span className="text-xs text-gray-400">{invoice.clientEmail}</span>
+                          )}
+                          {(invoice.billedFrom || invoice.billedTo) && (
+                            <span className="text-xs text-violet-600 font-medium flex items-center gap-1">
+                              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              {invoice.billedFrom && new Date(invoice.billedFrom + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              {invoice.billedFrom && invoice.billedTo && ' – '}
+                              {invoice.billedTo && new Date(invoice.billedTo + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </span>
+                          )}
+                          {invoice.dueDate && (
+                            <span className={`text-xs ${overdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                              {overdue ? 'Overdue: ' : 'Due: '}
+                              {new Date(invoice.dueDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </span>
+                          )}
+                          <span className="text-xs text-gray-400">{invoice.items.length} line item{invoice.items.length !== 1 ? 's' : ''}</span>
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <div className="text-base font-bold text-gray-900">{formatCurrency(total)}</div>
+                      </div>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => void downloadInvoicePDF(invoice)}
+                          title="Download PDF"
+                          className="rounded-lg p-1.5 text-gray-400 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => { setEditingInvoice(invoice); setShowInvoiceForm(true); }}
+                          className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => deleteInvoice(invoice.id)}
+                          className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </main>
+      )}
+
+      {view === 'tasks' && <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
         {/* Stats */}
         <div className="grid grid-cols-5 gap-3">
           {[
@@ -466,7 +775,7 @@ export default function Home() {
             })}
           </div>
         )}
-      </main>
+      </main>}
 
       {/* Form Modal */}
       {showForm && (
@@ -476,6 +785,17 @@ export default function Home() {
           }
           onClose={() => { setShowForm(false); setEditingTask(null); }}
           initialTask={editingTask}
+        />
+      )}
+
+      {showInvoiceForm && (
+        <InvoiceForm
+          onSubmit={(data) => editingInvoice ? updateInvoice(data) : addInvoice(data)}
+          onClose={() => { setShowInvoiceForm(false); setEditingInvoice(null); }}
+          initialInvoice={editingInvoice}
+          nextInvoiceNumber={nextInvoiceNumber}
+          tasks={tasks}
+          defaultHourlyRate={defaultRate}
         />
       )}
     </div>
