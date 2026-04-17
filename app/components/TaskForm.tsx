@@ -149,6 +149,7 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
               >
                 <option value="todo">To Do</option>
                 <option value="in-progress">In Progress</option>
+                <option value="ready-to-test">Ready to Test</option>
                 <option value="done">Done</option>
               </select>
             </div>

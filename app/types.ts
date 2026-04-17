@@ -1,5 +1,5 @@
 export type Priority = 'low' | 'medium' | 'high';
-export type Status = 'todo' | 'in-progress' | 'done';
+export type Status = 'todo' | 'in-progress' | 'ready-to-test' | 'done';
 export type Category = 'bug' | 'new-feature' | 'improvement' | 'va';
 export type InvoiceStatus = 'draft' | 'sent' | 'paid';
 
@@ -22,6 +22,22 @@ export interface Invoice {
   billedTo?: string;
   status: InvoiceStatus;
   createdAt: string;
+}
+
+export interface CycleEntry {
+  taskId: string;
+  taskName: string;
+  timeSpent: number;
+  category?: Category;
+  status: Status;
+}
+
+export interface Cycle {
+  id: string;
+  label: string;
+  endedAt: string;
+  totalMinutes: number;
+  snapshot: CycleEntry[];
 }
 
 export interface Attachment {
