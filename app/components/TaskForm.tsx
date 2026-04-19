@@ -8,7 +8,7 @@ interface TaskFormProps {
     task: Omit<Task, 'id' | 'createdAt' | 'attachments'>,
     newFiles: File[],
     removedAttachmentIds: string[]
-  ) => void;
+  ) => Promise<string | null>;
   onClose: () => void;
   initialTask?: Task | null;
 }
@@ -30,6 +30,8 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
   const [newFiles, setNewFiles] = useState<File[]>([]);
   const [existingAttachments, setExistingAttachments] = useState<Attachment[]>([]);
   const [removedAttachmentIds, setRemovedAttachmentIds] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -45,23 +47,38 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
     }
   }, [initialTask]);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    onSubmit(
-      {
-        name: name.trim(),
-        description: description.trim(),
-        priority,
-        status,
-        dueDate: dueDate || undefined,
-        timeSpent: timeSpent !== '' ? Number(timeSpent) : undefined,
-        category: category !== '' ? category : undefined,
-      },
-      newFiles,
-      removedAttachmentIds
-    );
-    onClose();
+    setSubmitting(true);
+    setSubmitError('');
+
+    try {
+      const error = await onSubmit(
+        {
+          name: name.trim(),
+          description: description.trim(),
+          priority,
+          status,
+          dueDate: dueDate || undefined,
+          timeSpent: timeSpent !== '' ? Number(timeSpent) : undefined,
+          category: category !== '' ? category : undefined,
+        },
+        newFiles,
+        removedAttachmentIds
+      );
+
+      if (error) {
+        setSubmitError(error);
+        return;
+      }
+
+      onClose();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Could not save the task.');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -106,7 +123,10 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (submitError) setSubmitError('');
+              }}
               placeholder="Enter task name..."
               className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
               required
@@ -119,7 +139,10 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
             </label>
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                if (submitError) setSubmitError('');
+              }}
               placeholder="Add a description..."
               rows={3}
               className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all resize-none"
@@ -131,7 +154,10 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Priority</label>
               <select
                 value={priority}
-                onChange={(e) => setPriority(e.target.value as Priority)}
+                onChange={(e) => {
+                  setPriority(e.target.value as Priority);
+                  if (submitError) setSubmitError('');
+                }}
                 className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-white"
               >
                 <option value="low">Low</option>
@@ -144,7 +170,10 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Status</label>
               <select
                 value={status}
-                onChange={(e) => setStatus(e.target.value as Status)}
+                onChange={(e) => {
+                  setStatus(e.target.value as Status);
+                  if (submitError) setSubmitError('');
+                }}
                 className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-white"
               >
                 <option value="todo">To Do</option>
@@ -159,7 +188,10 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Category</label>
             <select
               value={category}
-              onChange={(e) => setCategory(e.target.value as Category | '')}
+              onChange={(e) => {
+                setCategory(e.target.value as Category | '');
+                if (submitError) setSubmitError('');
+              }}
               className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-white"
             >
               <option value="">No category</option>
@@ -176,7 +208,10 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
               <input
                 type="date"
                 value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
+                onChange={(e) => {
+                  setDueDate(e.target.value);
+                  if (submitError) setSubmitError('');
+                }}
                 className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
               />
             </div>
@@ -189,7 +224,10 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
                 type="number"
                 min={0}
                 value={timeSpent}
-                onChange={(e) => setTimeSpent(e.target.value)}
+                onChange={(e) => {
+                  setTimeSpent(e.target.value);
+                  if (submitError) setSubmitError('');
+                }}
                 placeholder="e.g. 90"
                 className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
               />
@@ -281,19 +319,27 @@ export default function TaskForm({ onSubmit, onClose, initialTask }: TaskFormPro
             )}
           </div>
 
+          {submitError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+              {submitError}
+            </div>
+          )}
+
           <div className="flex gap-3 pt-1">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              disabled={submitting}
+              className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:pointer-events-none"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+              disabled={submitting}
+              className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:pointer-events-none"
             >
-              {initialTask ? 'Save Changes' : 'Add Task'}
+              {submitting ? 'Saving...' : initialTask ? 'Save Changes' : 'Add Task'}
             </button>
           </div>
         </form>

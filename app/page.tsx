@@ -116,6 +116,44 @@ function formatSupabaseError(error: { code?: string; message?: string } | null, 
   return error.message ?? `Could not save the ${tableName}.`;
 }
 
+function formatTaskPersistenceError(error: { code?: string; message?: string } | null, attemptedStatus?: Status) {
+  if (!error) return 'Could not save the task.';
+
+  const message = error.message?.toLowerCase() ?? '';
+  const rejectedReadyToTest =
+    attemptedStatus === 'ready-to-test' &&
+    (
+      error.code === '22P02' ||
+      error.code === '23514' ||
+      message.includes('ready-to-test') ||
+      (message.includes('status') && (message.includes('constraint') || message.includes('enum')))
+    );
+
+  if (rejectedReadyToTest) {
+    return 'Supabase rejected "ready-to-test". Run the SQL migration so public.tasks.status allows todo, in-progress, ready-to-test, and done.';
+  }
+
+  return error.message ?? 'Could not save the task.';
+}
+
+function TaskErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      <p>{message}</p>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="rounded p-1 text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors"
+        aria-label="Dismiss task error"
+      >
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 export default function Home() {
   const [view, setView] = useState<'tasks' | 'ready-to-test' | 'invoices'>('tasks');
 
@@ -128,6 +166,7 @@ export default function Home() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [expandedAttachments, setExpandedAttachments] = useState<Set<string>>(new Set());
+  const [taskStatusError, setTaskStatusError] = useState<string | null>(null);
 
   // --- Invoices state ---
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -427,7 +466,7 @@ export default function Home() {
   async function addTask(
     data: Omit<Task, 'id' | 'createdAt' | 'attachments'>,
     newFiles: File[]
-  ) {
+  ): Promise<string | null> {
     const { data: row, error } = await supabase
       .from('tasks')
       .insert({
@@ -441,19 +480,23 @@ export default function Home() {
       })
       .select()
       .single();
-    if (!error && row) {
-      const task = rowToTask({ ...(row as Record<string, unknown>), task_attachments: [] });
-      const attachments = await uploadFiles(task.id, newFiles);
-      setTasks((prev) => [{ ...task, attachments }, ...prev]);
+
+    if (error || !row) {
+      return formatTaskPersistenceError(error, data.status);
     }
+
+    const task = rowToTask({ ...(row as Record<string, unknown>), task_attachments: [] });
+    const attachments = await uploadFiles(task.id, newFiles);
+    setTasks((prev) => [{ ...task, attachments }, ...prev]);
+    return null;
   }
 
   async function updateTask(
     data: Omit<Task, 'id' | 'createdAt' | 'attachments'>,
     newFiles: File[],
     removedAttachmentIds: string[]
-  ) {
-    if (!editingTask) return;
+  ): Promise<string | null> {
+    if (!editingTask) return 'The task is no longer available.';
     const { data: row, error } = await supabase
       .from('tasks')
       .update({
@@ -468,21 +511,25 @@ export default function Home() {
       .eq('id', editingTask.id)
       .select()
       .single();
-    if (!error && row) {
-      await deleteAttachments(removedAttachmentIds);
-      const newAttachments = await uploadFiles(editingTask.id, newFiles);
-      const keptAttachments = (editingTask.attachments ?? []).filter(
-        (a) => !removedAttachmentIds.includes(a.id)
-      );
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === editingTask.id
-            ? { ...rowToTask({ ...(row as Record<string, unknown>), task_attachments: [] }), attachments: [...keptAttachments, ...newAttachments] }
-            : t
-        )
-      );
+
+    if (error || !row) {
+      return formatTaskPersistenceError(error, data.status);
     }
+
+    await deleteAttachments(removedAttachmentIds);
+    const newAttachments = await uploadFiles(editingTask.id, newFiles);
+    const keptAttachments = (editingTask.attachments ?? []).filter(
+      (a) => !removedAttachmentIds.includes(a.id)
+    );
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === editingTask.id
+          ? { ...rowToTask({ ...(row as Record<string, unknown>), task_attachments: [] }), attachments: [...keptAttachments, ...newAttachments] }
+          : t
+      )
+    );
     setEditingTask(null);
+    return null;
   }
 
   function toggleAttachments(taskId: string) {
@@ -511,14 +558,26 @@ export default function Home() {
       task.status === 'done' ? 'todo' :
       task.status === 'ready-to-test' ? 'done' :
       'ready-to-test';
-    await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
+    const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
+    if (error) {
+      setTaskStatusError(formatTaskPersistenceError(error, newStatus));
+      return;
+    }
+
+    setTaskStatusError(null);
     setTasks((prev) =>
       prev.map((t) => (t.id === id ? { ...t, status: newStatus } : t))
     );
   }
 
   async function setTaskStatus(id: string, status: Status) {
-    await supabase.from('tasks').update({ status }).eq('id', id);
+    const { error } = await supabase.from('tasks').update({ status }).eq('id', id);
+    if (error) {
+      setTaskStatusError(formatTaskPersistenceError(error, status));
+      return;
+    }
+
+    setTaskStatusError(null);
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
   }
 
@@ -623,6 +682,11 @@ export default function Home() {
 
       {view === 'ready-to-test' && (
         <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
+          {taskStatusError && (
+            <div className="mb-4">
+              <TaskErrorBanner message={taskStatusError} onDismiss={() => setTaskStatusError(null)} />
+            </div>
+          )}
           {readyToTestTasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <div className="rounded-full bg-amber-50 p-5 mb-4">
@@ -905,6 +969,10 @@ export default function Home() {
             <option value="low">Low</option>
           </select>
         </div>
+
+        {taskStatusError && (
+          <TaskErrorBanner message={taskStatusError} onDismiss={() => setTaskStatusError(null)} />
+        )}
 
         {/* Task List */}
         {loading ? (
